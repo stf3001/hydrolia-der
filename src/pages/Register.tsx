@@ -114,6 +114,11 @@ const Register = () => {
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: formData.email,
         password: formData.password,
+        options: {
+          data: {
+            role: 'client'
+          }
+        }
       });
 
       if (authError) throw authError;
@@ -136,22 +141,25 @@ const Register = () => {
 
         if (clientError) throw clientError;
 
-        // Create contact record
-        const { error: contactError } = await supabase
-          .from('contacts')
+        // Create user role
+        const { error: roleError } = await supabase
+          .from('user_roles')
           .insert([
             {
-              first_name: formData.firstName,
-              last_name: formData.lastName,
-              email: formData.email,
-              phone: formData.phone || null,
-              company: null,
-              message: null,
-              status: 'registered'
+              user_id: authData.user.id,
+              role: 'client'
             }
           ]);
 
-        if (contactError) throw contactError;
+        if (roleError) throw roleError;
+
+        // Sign in the user automatically
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email: formData.email,
+          password: formData.password,
+        });
+
+        if (signInError) throw signInError;
 
         // Redirect to confirmation page
         navigate('/register/confirmation');

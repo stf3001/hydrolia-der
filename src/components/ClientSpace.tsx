@@ -1,172 +1,155 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Lock, User, Building2, Phone, MapPin, Calendar, Mail } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Lock, User, Building2, Phone, MapPin, Calendar, Mail, Edit, Save, X } from 'lucide-react';
+import { useNavigate, Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import type { Database } from '../lib/database.types';
+import { useAuth } from '../lib/AuthContext';
+import { LoginForm } from './auth/LoginForm';
 
 type Client = Database['public']['Tables']['clients']['Row'];
 
 const ClientSpace = () => {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
+  const { user } = useAuth();
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [clientData, setClientData] = useState<Client | null>(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedData, setEditedData] = useState<Partial<Client> | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
-    checkUser();
-  }, []);
+    const fetchData = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        
+        if (!user?.email) {
+          throw new Error("Email non trouvé dans la session");
+        }
 
-  const checkUser = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session) {
-      setIsAuthenticated(true);
-      fetchClientData(session.user.email);
-    }
-  };
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session || session.user.email !== user.email) {
+          throw new Error("Session invalide");
+        }
 
-  const fetchClientData = async (userEmail: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('clients')
-        .select('*')
-        .eq('email', userEmail)
-        .single();
+        const { data, error } = await supabase
+          .from('clients')
+          .select('*')
+          .eq('email', user.email)
+          .single();
 
-      if (error) throw error;
-      setClientData(data);
-    } catch (err) {
-      console.error('Error fetching client data:', err);
-      setError('Unable to fetch client data');
-    }
-  };
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-
-    try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password
-      });
-
-      if (error) throw error;
-
-      setIsAuthenticated(true);
-      if (data.user) {
-        fetchClientData(data.user.email!);
+        if (error) {
+          if (error.code === 'PGRST116') {
+            throw new Error("Aucune donnée client trouvée pour cet email");
+          }
+          throw error;
+        }
+        
+        setClientData(data);
+        setEditedData(data);
+      } catch (err) {
+        console.error('Error:', err);
+        setError(err instanceof Error ? err.message : 'Échec de la récupération des données');
+        navigate('/login');
+      } finally {
+        setLoading(false);
       }
-    } catch (err) {
-      setError('Identifiants incorrects. Veuillez réessayer.');
-    } finally {
-      setLoading(false);
-    }
-  };
+    };
+
+    fetchData();
+  }, [navigate]);
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
-    setIsAuthenticated(false);
-    setClientData(null);
+    try {
+      await supabase.auth.signOut();
+      navigate('/login');
+    } catch (err) {
+      console.error('Logout error:', err);
+      setError('Échec de la déconnexion');
+    }
   };
 
-  if (isAuthenticated && clientData) {
+  const handleEdit = () => {
+    setIsEditing(true);
+    setSuccessMessage(null);
+  };
+
+  const handleCancel = () => {
+    setIsEditing(false);
+    setEditedData(clientData);
+    setSuccessMessage(null);
+  };
+
+  const handleSave = async () => {
+    if (!editedData || !clientData) return;
+
+    try {
+      const { error } = await supabase
+        .from('clients')
+        .update(editedData)
+        .eq('id', clientData.id);
+
+      if (error) throw error;
+
+      setClientData(prev => prev ? { ...prev, ...editedData } : null);
+      setIsEditing(false);
+      setSuccessMessage('Informations mises à jour avec succès');
+      
+      // Effacer le message de succès après 3 secondes
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (err) {
+      console.error('Update error:', err);
+      setError('Échec de la mise à jour des informations');
+    }
+  };
+
+  const handleInputChange = (field: keyof Client, value: string) => {
+    setEditedData(prev => prev ? { ...prev, [field]: value } : null);
+  };
+
+  if (!user) {
     return (
-      <div className="min-h-screen bg-gray-50 py-12">
-        <div className="container mx-auto px-4">
+      <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-md mx-auto">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="max-w-4xl mx-auto"
+            className="text-center mb-8"
           >
-            <div className="bg-white rounded-xl shadow-lg overflow-hidden">
-              <div className="p-8">
-                <div className="flex justify-between items-center mb-8">
-                  <h1 className="text-3xl font-bold">Mon Espace Client</h1>
-                  <button
-                    onClick={handleLogout}
-                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-                  >
-                    Déconnexion
-                  </button>
-                </div>
+            <h1 className="text-3xl font-bold text-gray-900">Espace Client</h1>
+            <p className="mt-2 text-gray-600">
+              Connectez-vous ou créez votre compte pour accéder à votre espace personnel
+            </p>
+          </motion.div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                  <div className="space-y-6">
-                    <div>
-                      <h2 className="text-xl font-semibold mb-4">Informations personnelles</h2>
-                      <div className="space-y-4">
-                        <div className="flex items-center">
-                          <Building2 className="h-5 w-5 text-gray-400 mr-3" />
-                          <div>
-                            <p className="text-sm text-gray-500">Entreprise</p>
-                            <p className="font-medium">{clientData.company_name || 'Non renseigné'}</p>
-                          </div>
-                        </div>
-                        <div className="flex items-center">
-                          <User className="h-5 w-5 text-gray-400 mr-3" />
-                          <div>
-                            <p className="text-sm text-gray-500">Contact</p>
-                            <p className="font-medium">{clientData.contact_name || 'Non renseigné'}</p>
-                          </div>
-                        </div>
-                        <div className="flex items-center">
-                          <Mail className="h-5 w-5 text-gray-400 mr-3" />
-                          <div>
-                            <p className="text-sm text-gray-500">Email</p>
-                            <p className="font-medium">{clientData.email}</p>
-                          </div>
-                        </div>
-                        <div className="flex items-center">
-                          <Phone className="h-5 w-5 text-gray-400 mr-3" />
-                          <div>
-                            <p className="text-sm text-gray-500">Téléphone</p>
-                            <p className="font-medium">{clientData.phone || 'Non renseigné'}</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div>
-                      <h2 className="text-xl font-semibold mb-4">Adresse</h2>
-                      <div className="flex items-start">
-                        <MapPin className="h-5 w-5 text-gray-400 mr-3 mt-1" />
-                        <div>
-                          <p className="font-medium">{clientData.address || 'Non renseignée'}</p>
-                          <p>{clientData.postal_code} {clientData.city}</p>
-                          <p>{clientData.country}</p>
-                        </div>
-                      </div>
-                    </div>
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white shadow-lg rounded-lg overflow-hidden"
+          >
+            <div className="p-6">
+              <div className="space-y-4">
+                <Link
+                  to="/login"
+                  className="w-full flex items-center justify-center px-4 py-3 border border-transparent text-base font-medium rounded-md text-white bg-[#1A3E6B] hover:bg-opacity-90"
+                >
+                  Se connecter
+                </Link>
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-gray-300" />
                   </div>
-
-                  <div className="space-y-6">
-                    <div>
-                      <h2 className="text-xl font-semibold mb-4">Informations du compte</h2>
-                      <div className="flex items-center">
-                        <Calendar className="h-5 w-5 text-gray-400 mr-3" />
-                        <div>
-                          <p className="text-sm text-gray-500">Date de création</p>
-                          <p className="font-medium">
-                            {new Date(clientData.created_at).toLocaleDateString('fr-FR')}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div>
-                      <h2 className="text-xl font-semibold mb-4">Historique des commandes</h2>
-                      <div className="bg-gray-50 rounded-lg p-4">
-                        <p className="text-gray-500 text-center">
-                          Aucune commande pour le moment
-                        </p>
-                      </div>
-                    </div>
+                  <div className="relative flex justify-center text-sm">
+                    <span className="px-2 bg-white text-gray-500">ou</span>
                   </div>
                 </div>
+                <Link
+                  to="/register"
+                  className="w-full flex items-center justify-center px-4 py-3 border border-[#1A3E6B] text-base font-medium rounded-md text-[#1A3E6B] bg-white hover:bg-gray-50"
+                >
+                  Créer un compte
+                </Link>
               </div>
             </div>
           </motion.div>
@@ -175,128 +158,111 @@ const ClientSpace = () => {
     );
   }
 
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex justify-center items-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#1A3E6B]"></div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex justify-center items-center">
+        <div className="bg-white p-8 rounded-lg shadow-md max-w-md w-full">
+          <p className="text-red-600 mb-4 text-center">{error}</p>
+          <button
+            onClick={handleLogout}
+            className="w-full px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+          >
+            Déconnexion
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!clientData) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex justify-center items-center">
+        <div className="bg-white p-8 rounded-lg shadow-md max-w-md w-full">
+          <p className="mb-4 text-center">Aucune donnée client trouvée</p>
+          <button
+            onClick={handleLogout}
+            className="w-full px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+          >
+            Déconnexion
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
-      <div className="sm:mx-auto sm:w-full sm:max-w-md">
+    <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-4xl mx-auto">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="text-center"
+          className="bg-white shadow-lg rounded-lg overflow-hidden"
         >
-          <h2 className="text-3xl font-bold text-gray-900">Espace Client</h2>
-          <p className="mt-2 text-gray-600">
-            Accédez à votre espace personnel Hydrolia
-          </p>
-        </motion.div>
-      </div>
-
-      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.5, delay: 0.2 }}
-          className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10"
-        >
-          <form className="space-y-6" onSubmit={handleLogin}>
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-                Email
-              </label>
-              <div className="mt-1 relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <User className="h-5 w-5 text-gray-400" />
-                </div>
-                <input
-                  id="email"
-                  name="email"
-                  type="email"
-                  autoComplete="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="appearance-none block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                />
+          <div className="p-8">
+            <div className="flex items-center justify-between mb-8">
+              <h1 className="text-3xl font-bold text-gray-900">Mon Espace Client</h1>
+              <div className="flex items-center space-x-2 text-gray-600">
+                <User className="h-5 w-5" />
+                <span>{user.email}</span>
+              </div>
+            </div>
+            
+            <div className="flex justify-between items-center mb-8">
+              <div className="flex space-x-4">
+                {isEditing ? (
+                  <>
+                    <button
+                      onClick={handleSave}
+                      className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center"
+                    >
+                      <Save className="h-4 w-4 mr-2" />
+                      Enregistrer
+                    </button>
+                    <button
+                      onClick={handleCancel}
+                      className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors flex items-center"
+                    >
+                      <X className="h-4 w-4 mr-2" />
+                      Annuler
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={handleEdit}
+                    className="px-4 py-2 bg-[#1A3E6B] text-white rounded-lg hover:bg-opacity-90 transition-colors flex items-center"
+                  >
+                    <Edit className="h-4 w-4 mr-2" />
+                    Modifier
+                  </button>
+                )}
+                <button
+                  onClick={handleLogout}
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                >
+                  Déconnexion
+                </button>
               </div>
             </div>
 
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-                Mot de passe
-              </label>
-              <div className="mt-1 relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Lock className="h-5 w-5 text-gray-400" />
-                </div>
-                <input
-                  id="password"
-                  name="password"
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="appearance-none block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                />
-              </div>
-            </div>
-
-            {error && (
-              <div className="text-red-600 text-sm">
-                {error}
+            {successMessage && (
+              <div className="mb-6 p-4 bg-green-100 text-green-700 rounded-lg">
+                {successMessage}
               </div>
             )}
 
-            <div className="flex items-center justify-between">
-              <div className="flex items-center">
-                <input
-                  id="remember-me"
-                  name="remember-me"
-                  type="checkbox"
-                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                />
-                <label htmlFor="remember-me" className="ml-2 block text-sm text-gray-900">
-                  Se souvenir de moi
-                </label>
-              </div>
-
-              <div className="text-sm">
-                <a href="#" className="font-medium text-blue-600 hover:text-blue-500">
-                  Mot de passe oublié ?
-                </a>
-              </div>
-            </div>
-
-            <div>
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-              >
-                {loading ? 'Connexion...' : 'Se connecter'}
-              </button>
-            </div>
-          </form>
-
-          <div className="mt-6">
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-300" />
-              </div>
-              <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-white text-gray-500">
-                  Vous n'avez pas encore de compte ?
-                </span>
-              </div>
-            </div>
-
-            <div className="mt-6">
-              <Link
-                to="/register"
-                className="w-full flex justify-center py-2 px-4 border border-blue-600 rounded-md shadow-sm text-sm font-medium text-blue-600 bg-white hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-              >
-                Créez votre compte
-              </Link>
+            <div className="space-y-6">
+              <p className="text-gray-600">
+                Bienvenue dans votre espace client. Cette section est en cours de développement.
+              </p>
+              {/* Ajoutez ici le contenu de l'espace client */}
             </div>
           </div>
         </motion.div>
